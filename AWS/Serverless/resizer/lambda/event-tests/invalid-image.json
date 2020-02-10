@@ -1,0 +1,6 @@
+{
+  "queryStringParameters": {
+    "image": "https://google.com/x.jpg",
+    "size": "1000x1000"
+  }
+}

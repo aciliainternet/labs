@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Serverless Image Resizer
+Parameters:
+    CodeS3BucketParameter:
+        Type: String
+        Default: acilia
+        Description: Enter the S3 Bucket name where the code is hosted
+    CodeS3KeyParameter:
+        Type: String
+        Default: labs/AWS/Serverless/resizer/resizer.zip
+        Description: Enter the S3 Key path to the code file
+Resources:
+    # Create the Role for the Lambda Function to use
+    resizerRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Principal:
+                            Service:
+                                - "lambda.amazonaws.com"
+                        Action:
+                            - "sts:AssumeRole"
+            Path: /
+            ManagedPolicyArns:
+                - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            Description: Resizer role for the Lambda Function
+
+    # Create the Lambda Function to execute the resizer
+    resizerFunction:
+        Type: AWS::Lambda::Function
+        Properties:
+            Description: Resizer Lambda function
+            Runtime: nodejs12.x
+            MemorySize: 256
+            Timeout: 15
+            Role: !GetAtt resizerRole.Arn
+            Handler: index.handler
+            Code:
+                S3Bucket:
+                    Ref: CodeS3BucketParameter
+                S3Key:
+                    Ref: CodeS3KeyParameter
+            #TracingConfig:
+            #    Mode: Active -- The provided execution role does not have permissions to call PutTraceSegments on XRAY (Service: AWSLambdaInternal; Status Code: 400; Error Code: InvalidParameterValueException; Request ID: 5790a974-53aa-49ef-b589-1035c85fe861)
+
+    resizerPermissionForAPIGateway:
+        Type: AWS::Lambda::Permission
+        Properties:
+            FunctionName: !GetAtt resizerFunction.Arn
+            Action: lambda:InvokeFunction
+            Principal: apigateway.amazonaws.com
+            SourceArn: !Sub >-
+                arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${resizerApi}/*/GET/resizer
+
+    # Creates the API Gateway to invoke the Lambda Function
+    resizerApi:
+        Type: 'AWS::ApiGateway::RestApi'
+        Properties:
+            Name: !Ref "AWS::StackName"
+            Description: Resizer API Gateway to invoke Lambda Function
+            EndpointConfiguration:
+                Types:
+                    - REGIONAL
+            MinimumCompressionSize: 0
+            BinaryMediaTypes:
+                - "*/*"
+                - "image/*"
+
+    resizerApiResource:
+        Type: 'AWS::ApiGateway::Resource'
+        Properties:
+            RestApiId: !Ref resizerApi
+            ParentId: !GetAtt
+                - resizerApi
+                - RootResourceId
+            PathPart: resizer
+
+    resizerApiRequestValidator:
+        Type: AWS::ApiGateway::RequestValidator
+        Properties:
+            RestApiId: !Ref resizerApi
+            ValidateRequestParameters: true
+
+    resizerApiMethod:
+        Type: 'AWS::ApiGateway::Method'
+        Properties:
+            RestApiId: !Ref resizerApi
+            ResourceId: !Ref resizerApiResource
+            HttpMethod: GET
+            AuthorizationType: NONE
+            RequestValidatorId: !Ref resizerApiRequestValidator
+            RequestParameters:
+                method.request.querystring.image: true
+                method.request.querystring.size: false
+                method.request.querystring.format: false
+            Integration:
+                Type: AWS_PROXY
+                IntegrationHttpMethod: POST
+                Uri: !Sub >-
+                    arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${resizerFunction.Arn}/invocations
+
+    resizerApiDeployment:
+        DependsOn: resizerApiMethod
+        Type: AWS::ApiGateway::Deployment
+        Properties:
+            RestApiId: !Ref resizerApi
+            Description: Deployment to production
+            StageName: prod

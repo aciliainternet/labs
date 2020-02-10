@@ -1,0 +1,6 @@
+{
+  "queryStringParameters": {
+    "image": "https://dummyimage.com/1920x1080/592159/fcc121.jpg",
+    "size": "1000x1000"
+  }
+}
